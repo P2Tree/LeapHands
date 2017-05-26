@@ -1,0 +1,10 @@
+using System.Xml.Serialization;
+
+byte[] array = null;
+List<Int16> myData = new List<Int16>();
+myData.Add(12);
+
+foreach (Int16 a in myData)
+    array = BitCoverter.GetBytes(a);
+
+
