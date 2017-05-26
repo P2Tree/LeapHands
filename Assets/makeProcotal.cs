@@ -14,11 +14,12 @@ namespace Protocal {
 
         public makeProtocal(Int16[] inputVal, int len, Protocal.ProType type = ProType.Bytes) {
             if (type == ProType.String) {
-                dataString = inputVal[0].ToString();
-                for (int i = 1; i < len; i++) {
+                dataString = "!";
+                for (int i = 0; i < len; i++) {
                     dataString += ",";
                     dataString += inputVal[i].ToString();
                 }
+                dataString += ",#";
             }
             else if (type == ProType.Bytes) {
                 dataBytes = new byte[len * 2];

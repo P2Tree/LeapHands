@@ -1,4 +1,6 @@
-﻿using System;
+﻿#define DEBUG
+
+using System;
 using System.Text;
 using System.Collections;
 using System.Collections.Generic;
@@ -10,6 +12,8 @@ using Protocal;
 
 public class main : HandController {
 
+	#region Object members
+	Boolean debugFlag = false;
 	// hand arguments: 3 position elements and 3 pasture elements
 	double handX;
 	double handY;
@@ -72,14 +76,23 @@ public class main : HandController {
 	private string sendStringCmd;
 	private byte[] sendBytesCmd;
 
+	#endregion
+
+	#region member functions
 	/** Creates a new Leap Controller object. */
 	// Will be automate called when the script running ( after MonoBehavior created)
 	// it is used to create some system variances and objects
 	void Awake() {
+
+		#if (DEBUG)
+		debugFlag = true;
+		#endif
+
 		leap_controller_ = new Controller();
 
 		// Initialize udp socket for communication
-		udp = new udpSocket("127.0.0.1", 8002);
+		udp = new udpSocket("192.168.1.134", 6666);
+		// udp = new udpSocket("127.0.0.1", 8002);
 	}
 
 	/** Initalizes the hand and tool lists and recording, if enabled.*/
@@ -138,7 +151,7 @@ public class main : HandController {
 			int ret = ProcessHands(frame);
 
 			if (ret == 0) {
-				SendInformation(ProType.Bytes);
+				SendInformation(ProType.String);
 			}
 		}
 	}
@@ -199,7 +212,7 @@ public class main : HandController {
             handPitch = handDirection.Pitch * 180.0f / Mathf.PI;
             handYaw = handDirection.Yaw * 180.0f / (float)Mathf.PI;
 
-			if (false) {
+			if (debugFlag) {
 				Debug.Log("handX: " + handX.ToString());
 				Debug.Log("handY: " + handY.ToString());
 				Debug.Log("handZ: " + handZ.ToString());
@@ -213,10 +226,10 @@ public class main : HandController {
             // use to find the zero point of each finger, only when needed open
             // checkAverageAngle();
 
-            amendFingersAngle(false);
+            amendFingersAngle(debugFlag);
 
             /// prepare for communication
-            constructeCmd();
+            constructeCmd(ProType.String);
             // grab
             // float grabStrength = fixHand.GrabStrength;
             // Debug.Log(fixHand.Id + ", hand grab strength: " + grabStrength);
@@ -330,5 +343,7 @@ public class main : HandController {
 			udp.SocketSend(sendBytesCmd);
 		}
 	}
+
+	#endregion
 
 }
