@@ -1,5 +1,5 @@
 ﻿// #define ADJUST
-#define SHOWLOG
+// #define SHOWLOG
 
 using System;
 using System.Text;
@@ -10,10 +10,12 @@ using Leap;
 using Leap.Util;
 using Network;
 using Protocal;
+using Detector;
 
 public class main : HandController {
 
 	#region Object members
+
 	Boolean logFlag = false;
 	// hand arguments: 3 position elements and 3 pasture elements
 	double handX;
@@ -81,6 +83,7 @@ public class main : HandController {
 	private string sendStringCmd;
 	private byte[] sendBytesCmd;
 
+
 	#endregion
 
 	#region member functions
@@ -103,7 +106,7 @@ public class main : HandController {
 		leap_controller_ = new Controller();
 
 		// Initialize udp socket for communication
-		udp = new udpSocket("192.168.1.134", 6666);
+		udp = new udpSocket("192.168.1.134", 1234);
 		// udp = new udpSocket("127.0.0.1", 8002);
 	}
 
@@ -154,6 +157,7 @@ public class main : HandController {
 
 		Frame frame = GetFrame();
 
+		
 		if (frame.Id != prev_physics_id_)
 		{
 			UpdateHandModels(hand_physics_, frame.Hands, leftPhysicsModel, rightPhysicsModel);
@@ -162,9 +166,9 @@ public class main : HandController {
 
 			int ret = ProcessHands(frame);
 
-			// if (ret == 0) {
-			// 	SendInformation(ProType.String);
-			// }
+			if (ret == 0) {
+				SendInformation(ProType.String);
+			}
 		}
 	}
 
@@ -208,21 +212,22 @@ public class main : HandController {
                 // Debug.Log(fixHand.Id + " , Hand confidence: " + handConfidence + ", break");
                 return -1; // do not confident too much
             }
-            // Debug.Log(fixHand.Id + " , Hand confidence: " + handConfidence);
+
+			// monitor palm moving speed in the space
+			checkVelocity(fixHand);
 
             /// Palm position and posture
-            handDirection = fixHand.Direction;
-            handNormal = fixHand.PalmNormal;
+			{
+				handDirection = fixHand.Direction;
+				handNormal = fixHand.PalmNormal;
 
-            // Debug.Log("Hand id: " + hand.Id + ", " +
-            // 		"Palm position: " + hand.PalmPosition + ", " +
-            // 			"Fingers amount: " + hand.Fingers.Count);
-            handX = fixHand.StabilizedPalmPosition.x;
-            handY = fixHand.StabilizedPalmPosition.y;
-            handZ = fixHand.StabilizedPalmPosition.z;
-            handRoll = handNormal.Roll * 180.0f / Mathf.PI;
-            handPitch = handDirection.Pitch * 180.0f / Mathf.PI;
-            handYaw = handDirection.Yaw * 180.0f / (float)Mathf.PI;
+				handX = fixHand.StabilizedPalmPosition.x;
+				handY = fixHand.StabilizedPalmPosition.y;
+				handZ = fixHand.StabilizedPalmPosition.z;
+				handRoll = handNormal.Roll * 180.0f / Mathf.PI;
+				handPitch = handDirection.Pitch * 180.0f / Mathf.PI;
+				handYaw = handDirection.Yaw * 180.0f / (float)Mathf.PI;
+			}
 
 			if (logFlag) {
 				Debug.Log("handX: " + handX.ToString());
@@ -236,14 +241,14 @@ public class main : HandController {
             getFingers(handDirection, handNormal);
 
             /// use to find the zero point of each finger, only when needed open
-#if (ADJUST)
+			#if (ADJUST)
             checkAverageAngle(1000);
-#endif
+			#endif
 
             amendFingersAngle(logFlag);
 
             /// prepare for communication
-            // constructeCmd(ProType.String);
+            constructeCmd(ProType.String);
 
             // grab
             // float grabStrength = fixHand.GrabStrength;
@@ -287,7 +292,7 @@ public class main : HandController {
 		}
 	}
 
-#if (ADJUST)
+	#if (ADJUST)
     private void checkAverageAngle(int iter = 1000)
     {
 		Debug.Log("Waiting ...");
@@ -313,7 +318,7 @@ public class main : HandController {
 			addPinkyAngle = 0;
         }
     }
-#endif
+	#endif
 
     private void getFingers(Vector handDirection, Vector handNormal)
     {
@@ -368,6 +373,23 @@ public class main : HandController {
 		}
 		else if(type == ProType.Bytes) {
 			udp.SocketSend(sendBytesCmd);
+		}
+	}
+
+	private void checkVelocity(Hand hand, float thresholdX = 700, float thresholdY = 700, float thresholdZ = 700) {
+		float speedOfX = hand.PalmVelocity.x;
+		float speedOfY = hand.PalmVelocity.y;
+		float speedOfZ = hand.PalmVelocity.z;
+
+		if (Mathf.Abs(speedOfX) > thresholdX) 
+		{
+			Debug.Log("Warning: hand x moving so fast! " + speedOfX);
+		}else if(Mathf.Abs(speedOfY) > thresholdY)
+		{
+			Debug.Log("Warning: hand y moving so fast! " + speedOfY);
+		}else if(Mathf.Abs(speedOfZ) > thresholdZ)
+		{
+			Debug.Log("Warning: hand z moving so fast! " + speedOfZ);
 		}
 	}
 
