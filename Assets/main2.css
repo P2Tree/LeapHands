@@ -1,5 +1,4 @@
-﻿// #define ADJUST
-#define SHOWLOG
+﻿// #undef DEBUG
 
 using System;
 using System.Text;
@@ -14,7 +13,7 @@ using Protocal;
 public class main : HandController {
 
 	#region Object members
-	Boolean logFlag = false;
+	Boolean debugFlag = false;
 	// hand arguments: 3 position elements and 3 pasture elements
 	double handX;
 	double handY;
@@ -24,11 +23,11 @@ public class main : HandController {
 	double handYaw;
 
 	// The direction is expressed as a unit vector pointing in the same direction
-	// as the directed line from the middle finger tip to the palm central 
+	// as the directed line from the palm position to the fingers
 	Vector handDirection;
 
 	// The direction is expressed as a unit vector pointing in the same direction
-	// as the palm normal (orthogonal to the palm and out of back of palm)
+	// as the palm normal (orthogonal to the palm)
 	Vector handNormal;	
 
 	// confidence value of hand frame
@@ -57,23 +56,19 @@ public class main : HandController {
 	double ringBoneTurnAngleRaw;
 	double pinkyBoneTurnAngleRaw;
 
-#if (ADJUST)
-
 	// amendment arguments solving
-	static double addThumbAngle = 0;
-	static double addIndexAngle = 0;
-	static double addMiddleAngle = 0;
-	static double addRingAngle = 0;
-	static double addPinkyAngle = 0;
+	static Vector addThumbAngle = new Vector(0, 0, 0);
+	static Vector addIndexAngle = new Vector(0, 0, 0);
+	static Vector addMiddleAngle = new Vector(0, 0, 0);
+	static Vector addRingAngle = new Vector(0, 0, 0);
+	static Vector addPinkyAngle = new Vector(0, 0, 0);
 	static int countNum = 0;
 
-#endif
-
-	const double BiasOfThumbAngle = 43.916;
-	const double BiasOfIndexAngle = 166.896;
-	const double BiasOfMiddleAngle = 168.612;
-	const double BiasOfRingAngle = 164.178;
-	const double BiasOfPinkyAngle = 151.647;
+	readonly Vector BiasOfThumbAngle = new Vector((float)0.776, (float)-0.293, (float)0.554);
+	readonly Vector BiasOfIndexAngle = new Vector((float)0.301, (float)-0.233, (float)0.923);
+	readonly Vector BiasOfMiddleAngle = new Vector((float)0.044, (float)-0.212, (float)0.973);
+	readonly Vector BiasOfRingAngle = new Vector((float)-0.214, (float)-0.250, (float)0.942);
+	readonly Vector BiasOfPinkyAngle = new Vector((float)-0.501, (float)-0.232, (float)0.831);
 
 	// communication arguments
 	private udpSocket udp;
@@ -89,15 +84,11 @@ public class main : HandController {
 	// it is used to create some system variances and objects
 	void Awake() {
 
-#if (ADJUST)
-		Debug.Log("Open ADJUST task.");
-#endif
-
-#if (SHOWLOG && !ADJUST)
-		logFlag = true;
-		Debug.Log("LOG mode.");
+#if (DEBUG)
+		debugFlag = true;
+		Debug.Log("This is DEBUG mode!");
 #else
-		logFlag = false;
+		debugFlag = false;
 #endif
 
 		leap_controller_ = new Controller();
@@ -224,7 +215,7 @@ public class main : HandController {
             handPitch = handDirection.Pitch * 180.0f / Mathf.PI;
             handYaw = handDirection.Yaw * 180.0f / (float)Mathf.PI;
 
-			if (logFlag) {
+			if (debugFlag) {
 				Debug.Log("handX: " + handX.ToString());
 				Debug.Log("handY: " + handY.ToString());
 				Debug.Log("handZ: " + handZ.ToString());
@@ -236,15 +227,12 @@ public class main : HandController {
             getFingers(handDirection, handNormal);
 
             /// use to find the zero point of each finger, only when needed open
-#if (ADJUST)
-            checkAverageAngle(1000);
-#endif
+            // checkAverageAngle();
 
-            amendFingersAngle(logFlag);
+            amendFingersAngle(debugFlag);
 
             /// prepare for communication
-            // constructeCmd(ProType.String);
-
+            constructeCmd(ProType.String);
             // grab
             // float grabStrength = fixHand.GrabStrength;
             // Debug.Log(fixHand.Id + ", hand grab strength: " + grabStrength);
@@ -272,11 +260,16 @@ public class main : HandController {
     }
 
     private void amendFingersAngle(Boolean angleShow = false) {
-		thumbBoneTurnAngle =  thumbBoneTurnAngleRaw - BiasOfThumbAngle;
-		indexBoneTurnAngle =  BiasOfIndexAngle - indexBoneTurnAngleRaw;
-		middleBoneTurnAngle =  BiasOfMiddleAngle - middleBoneTurnAngleRaw;
-		ringBoneTurnAngle =  BiasOfRingAngle - ringBoneTurnAngleRaw;
-		pinkyBoneTurnAngle =  BiasOfPinkyAngle - pinkyBoneTurnAngleRaw;
+		// thumbBoneTurnAngle = thumbBoneTurnAngleRaw - BiasOfThumbAngle;
+		// indexBoneTurnAngle = indexBoneTurnAngleRaw - BiasOfIndexAngle;
+		// middleBoneTurnAngle = middleBoneTurnAngleRaw - BiasOfMiddleAngle;
+		// ringBoneTurnAngle = ringBoneTurnAngleRaw - BiasOfRingAngle;
+		// pinkyBoneTurnAngle = pinkyBoneTurnAngleRaw - BiasOfPinkyAngle;
+		thumbBoneTurnAngle = thumbProximalBoneDirection.AngleTo(BiasOfThumbAngle) * 180.0f / (float)Mathf.PI;
+		indexBoneTurnAngle = indexInterBoneDirection.AngleTo(BiasOfIndexAngle) * 180.0f / (float)Mathf.PI;
+		middleBoneTurnAngle = middleInterBoneDirection.AngleTo(BiasOfMiddleAngle) * 180.0f / (float)Mathf.PI;
+		ringBoneTurnAngle = ringInterBoneDirection.AngleTo(BiasOfRingAngle) * 180.0f / (float)Mathf.PI;
+		pinkyBoneTurnAngle = pinkyInterBoneDirection.AngleTo(BiasOfPinkyAngle) * 180.0f / (float)Mathf.PI;
 
 		if (angleShow == true) {
 			Debug.Log("thumb angle: " + thumbBoneTurnAngle);
@@ -287,33 +280,30 @@ public class main : HandController {
 		}
 	}
 
-#if (ADJUST)
-    private void checkAverageAngle(int iter = 1000)
+    private void checkAverageAngle()
     {
-		Debug.Log("Waiting ...");
-        addThumbAngle += thumbBoneTurnAngleRaw;
-		addIndexAngle += indexBoneTurnAngleRaw;
-		addMiddleAngle += middleBoneTurnAngleRaw;
-		addRingAngle += ringBoneTurnAngleRaw;
-		addPinkyAngle += pinkyBoneTurnAngleRaw;
+        addThumbAngle = addThumbAngle + thumbProximalBoneDirection;
+		addIndexAngle = addIndexAngle + indexInterBoneDirection;
+		addMiddleAngle = addMiddleAngle + middleInterBoneDirection;
+		addRingAngle = addRingAngle + ringInterBoneDirection;
+		addPinkyAngle = addPinkyAngle + pinkyInterBoneDirection;
         countNum += 1;
-        if (countNum >= iter)
+        if (countNum >= 1000)
         {
 			// show average angles
-            Debug.Log("average thumb angle is: " + addThumbAngle / (double)countNum);
-            Debug.Log("average index angle is: " + addIndexAngle / (double)countNum);
-            Debug.Log("average middle angle is: " + addMiddleAngle / (double)countNum);
-            Debug.Log("average ring angle is: " + addRingAngle / (double)countNum);
-            Debug.Log("average pinky angle is: " + addPinkyAngle / (double)countNum);
+            Debug.Log("average thumb angle is: " + addThumbAngle / (float)countNum);
+            Debug.Log("average index angle is: " + addIndexAngle / (float)countNum);
+            Debug.Log("average middle angle is: " + addMiddleAngle / (float)countNum);
+            Debug.Log("average ring angle is: " + addRingAngle / (float)countNum);
+            Debug.Log("average pinky angle is: " + addPinkyAngle / (float)countNum);
             countNum = 0;
-            addThumbAngle = 0;
-			addIndexAngle = 0;
-			addMiddleAngle = 0;
-			addRingAngle = 0;
-			addPinkyAngle = 0;
+            addThumbAngle = new Vector(0, 0, 0);
+			addIndexAngle = new Vector(0, 0, 0);
+			addMiddleAngle = new Vector(0, 0, 0);
+			addRingAngle = new Vector(0, 0, 0);
+			addPinkyAngle = new Vector(0, 0, 0);
         }
     }
-#endif
 
     private void getFingers(Vector handDirection, Vector handNormal)
     {
@@ -323,22 +313,15 @@ public class main : HandController {
             getBoneDirection(finger);
         }
 
-		Vector handCrossDirection = handNormal.Cross(handDirection);
+		// Vector thumbDirection = handNormal.Cross(handDirection);
 
-		/// Angle difference between finger vector and hand normal vector
-		/// then radias to angle
-		/// TODO: 对于大拇指，选择骨头向量到handCrossDirection的夹角，还是骨头向量投影到handNormal与handCrossDirection所在平面后，再与handCrossDirection的夹角
-        thumbBoneTurnAngleRaw = thumbProximalBoneDirection.AngleTo(handCrossDirection) * 180.0f / (float)Mathf.PI;
-        indexBoneTurnAngleRaw = indexInterBoneDirection.AngleTo(handDirection) * 180.0f / (float)Mathf.PI;
-        middleBoneTurnAngleRaw = middleInterBoneDirection.AngleTo(handDirection) * 180.0f / (float)Mathf.PI;
-        ringBoneTurnAngleRaw = ringInterBoneDirection.AngleTo(handDirection) * 180.0f / (float)Mathf.PI;
-        pinkyBoneTurnAngleRaw = pinkyInterBoneDirection.AngleTo(handDirection) * 180.0f / (float)Mathf.PI;
-
-		// Debug.Log("thumb raw: " + thumbBoneTurnAngleRaw);
-		// Debug.Log("index raw: " + indexBoneTurnAngleRaw);
-		// Debug.Log("middle raw: " + middleBoneTurnAngleRaw);
-		// Debug.Log("ring raw: " + ringBoneTurnAngleRaw);
-		// Debug.Log("pinky raw: " + pinkyBoneTurnAngleRaw);
+		// // Angle difference between finger vector and hand normal vector
+		// // then radias to angle
+        // thumbBoneTurnAngleRaw = thumbProximalBoneDirection.AngleTo(thumbDirection) * 180.0f / (float)Mathf.PI;
+        // indexBoneTurnAngleRaw = indexInterBoneDirection.AngleTo(handNormal) * 180.0f / (float)Mathf.PI;
+        // middleBoneTurnAngleRaw = middleInterBoneDirection.AngleTo(handNormal) * 180.0f / (float)Mathf.PI;
+        // ringBoneTurnAngleRaw = ringInterBoneDirection.AngleTo(handNormal) * 180.0f / (float)Mathf.PI;
+        // pinkyBoneTurnAngleRaw = pinkyInterBoneDirection.AngleTo(handNormal) * 180.0f / (float)Mathf.PI;
 
     }
 
