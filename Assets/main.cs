@@ -1,5 +1,6 @@
 ﻿// #define ADJUST
 // #define SHOWLOG
+#define COMMUNICATE
 
 using System;
 using System.Text;
@@ -16,6 +17,7 @@ public class main : HandController {
 
 	#region Object members
 
+	HandDetector detector_;
 	Boolean logFlag = false;
 	// hand arguments: 3 position elements and 3 pasture elements
 	double handX;
@@ -78,11 +80,21 @@ public class main : HandController {
 	const double BiasOfPinkyAngle = 151.647;
 
 	// communication arguments
-	private udpSocket udp;
+	private udpClientSocket udp = null;
+	private tcpClientSocket tcp = null;
 	private makeProtocal constructor;
 	private string sendStringCmd;
 	private byte[] sendBytesCmd;
 
+	// abnormal states flag
+	private int abnormalOutofrange = 0; // 0 is normal mode
+	private int abnormalOutofspeed = 0; // 0 is normal mode
+	private static int abnormalSendedOutofrange = 0;	// if abnormal is sended, set to true
+	private static int abnormalSendedOutofspeed = 0;
+	private enum AbnormalType {OutOfRange, OutOfSpeed, Normal};
+
+	// readyToRun signal
+	private static bool readyToRun = true;
 
 	#endregion
 
@@ -105,9 +117,23 @@ public class main : HandController {
 
 		leap_controller_ = new Controller();
 
-		// Initialize udp socket for communication
-		udp = new udpSocket("192.168.1.134", 1234);
-		// udp = new udpSocket("127.0.0.1", 8002);
+		detector_ = new HandDetector();
+
+#if (COMMUNICATE)
+		///Initialize udp socket for communication
+		udp = new udpClientSocket("192.168.1.134", 1235);
+		// udp = new udpClientSocket("127.0.0.1", 8002);
+		
+
+		///Initialize tcp socket for communication
+		tcp = new tcpClientSocket("192.168.1.134", 5557);
+		// tcp = new tcpClientSocket("127.0.0.1", 8088);
+		
+		/// test tcp
+        // tcp.SocketSend("This is client: Hello server!");
+		///
+#endif
+
 	}
 
 	/** Initalizes the hand and tool lists and recording, if enabled.*/
@@ -127,54 +153,75 @@ public class main : HandController {
 			"Cannot connect to controller. Make sure you have Leap Motion v2.0+ installed");
 		}
 
-		if (enableRecordPlayback && recordingAsset != null)
-		recorder_.Load(recordingAsset);
+		// if (enableRecordPlayback && recordingAsset != null)
+		// recorder_.Load(recordingAsset);
 	}
 	
 	/** Updates the graphics objects. */
 	void Update() {
-		if (leap_controller_ == null)
-		return;
-		
-		UpdateRecorder();
-		Frame frame = GetFrame();
+		if (readyToRun == true)
+		{
+			if (leap_controller_ == null)
+			return;
+			
+			// UpdateRecorder();
+			Frame frame = GetFrame();
 
-		if (frame != null && !flag_initialized_)
-		{
-		InitializeFlags();
-		}
-		if (frame.Id != prev_graphics_id_)
-		{
-		UpdateHandModels(hand_graphics_, frame.Hands, leftGraphicsModel, rightGraphicsModel);
-		prev_graphics_id_ = frame.Id;
+			if (frame != null && !flag_initialized_)
+			{
+				InitializeFlags();
+			}
+			if (frame.Id != prev_graphics_id_)
+			{
+				UpdateHandModels(hand_graphics_, frame.Hands, leftGraphicsModel, rightGraphicsModel);
+				prev_graphics_id_ = frame.Id;
+			}
 		}
 	}
 
 	/** Updates the physics objects */
 	void FixedUpdate() {
-		if (leap_controller_ == null)
-		return;
-
-		Frame frame = GetFrame();
-
-		
-		if (frame.Id != prev_physics_id_)
+		if (readyToRun == true)
 		{
-			UpdateHandModels(hand_physics_, frame.Hands, leftPhysicsModel, rightPhysicsModel);
-			UpdateToolModels(tools_, frame.Tools, toolModel);
-			prev_physics_id_ = frame.Id;
+			if (leap_controller_ == null)
+				return;
 
-			int ret = ProcessHands(frame);
+			Frame frame = GetFrame();
 
-			if (ret == 0) {
-				SendInformation(ProType.String);
+			if (frame != null && !flag_initialized_)
+			{
+				InitializeFlags();
 			}
-		}
+
+			if (frame.Id != prev_physics_id_)
+            {
+                UpdateHandModels(hand_physics_, frame.Hands, leftPhysicsModel, rightPhysicsModel);
+                UpdateToolModels(tools_, frame.Tools, toolModel);
+                prev_physics_id_ = frame.Id;
+
+                int readyDataFlag = ProcessHands(frame);
+
+
+#if (COMMUNICATE)
+                SendAbnormal(readyDataFlag);
+
+                if (readyDataFlag == 0)
+                {
+                    SendInformation(ProType.String);
+                }
+#endif
+
+            }
+        }
 	}
+
 
     void OnApplicationQuit()
     {
-        udp.SocketQuit();
+#if (COMMUNICATE)
+		udp.SocketQuit();
+		tcp.SocketQuit();
+#endif
     }
 	private int ProcessHands(Frame frame) {
 		// Debug.Log("Frame id: " + frame.Id + ", " + 
@@ -383,16 +430,80 @@ public class main : HandController {
 
 		if (Mathf.Abs(speedOfX) > thresholdX) 
 		{
-			Debug.Log("Warning: hand x moving so fast! " + speedOfX);
+			// Debug.Log("Warning: hand x moving so fast! Speed: " + speedOfX);
+			abnormalOutofspeed = 1;
 		}else if(Mathf.Abs(speedOfY) > thresholdY)
 		{
-			Debug.Log("Warning: hand y moving so fast! " + speedOfY);
+			// Debug.Log("Warning: hand y moving so fast! Speed: " + speedOfY);
+			abnormalOutofspeed = 1; //2;
 		}else if(Mathf.Abs(speedOfZ) > thresholdZ)
 		{
-			Debug.Log("Warning: hand z moving so fast! " + speedOfZ);
+			// Debug.Log("Warning: hand z moving so fast! Speed: " + speedOfZ);
+			abnormalOutofspeed = 1; //3;
+		}else // normal state
+		{
+			abnormalOutofspeed = 0;
 		}
+
 	}
 
-	#endregion
+	static int i = 0;
+	static int sendedNormal = 0;
+    private void SendAbnormal(int ready)
+    {
+		i = i+1;
+        /// abnormal exception Check
+        abnormalOutofrange = HandDetector.abnormal;
+        // if (abnormalOutofrange == 1 && abnormalSendedOutofrange == 0)
+		if (abnormalOutofrange == 1)
+		{
+			///send abnormal exception to tcp port
+			SendAbnormalOnce(AbnormalType.OutOfRange, true);
+			abnormalSendedOutofrange = 1;
+			Debug.Log("abnormal debug: " + i + ", range ab");	
+			sendedNormal = 0;
+		}
+
+        // if (abnormalOutofspeed == 1 && abnormalSendedOutofspeed == 0)
+		if (abnormalOutofspeed == 1)
+		{
+			///send abnormal exception to tcp port
+			SendAbnormalOnce(AbnormalType.OutOfSpeed, true);
+			abnormalSendedOutofspeed = 1;
+			Debug.Log("abnormal debug: " + i + ", speed ab");
+			sendedNormal = 0;
+        }
+		
+        // if (abnormalOutofrange == 0 && abnormalOutofspeed == 0 && sendedNormal == 0)
+		if (abnormalOutofrange == 0 && abnormalOutofspeed == 0 && ready == 0)
+		{
+			SendAbnormalOnce(AbnormalType.Normal, true);
+			Debug.Log("abnormal debug: " + i + ", normal");	
+			sendedNormal = 1;
+			abnormalSendedOutofrange = 0;
+			abnormalSendedOutofspeed = 0;
+		}
+    }
+    private void SendAbnormalOnce(AbnormalType type, bool trigger)
+    {
+		byte[] data;
+        if (type == AbnormalType.OutOfSpeed)
+        {
+			data = new byte[] { 0x3c, 0x00 };
+			tcp.SocketSend(data);
+        }
+        else if (type == AbnormalType.OutOfRange)
+        {
+			data = new byte[] { 0x3c, 0x01 };
+			tcp.SocketSend(data);
+        }
+		else if (type == AbnormalType.Normal)
+		{
+			data = new byte[] { 0x3c, 0x02 };
+			tcp.SocketSend(data);
+		}
+    }
+
+    #endregion
 
 }

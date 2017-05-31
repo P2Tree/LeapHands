@@ -9,6 +9,8 @@ namespace Detector
 
     public HandController leap_controller_;
 
+    public static int abnormal = 0;
+
     HandModel GetHand(Collider other)
     {
       HandModel hand_model = null;
@@ -44,15 +46,35 @@ namespace Detector
       return null;
     }
 
-    void OnTriggerEnter(Collider other)
+    void OnTriggerStay(Collider other)
     {
       HandModel hand_model = GetHand(other);
       if (hand_model != null)
       {
         // Debug.Log ("Detected: " + other.transform.parent.name + "/" + other.gameObject.name);
-        Debug.Log(GetComponent<Collider>().name);
+        string name = GetComponent<Collider>().name;
+        // Debug.Log(name + " Enter collider");
+        // Debug.Log("Warning: hand out of range!");
+        if (name == "detect_bottom")
+          abnormal = 1;
+        else if(name == "detect_top")
+          abnormal = 1; //2;
+        else if(name == "detect_left")
+          abnormal = 1; //3;
+        else if(name == "detect_right")
+          abnormal = 1; //4;
+        else if(name == "detect_forward")
+          abnormal = 1; //5;
+        else if(name == "detect_backward")
+          abnormal = 1; //6;
         
       }
+    }
+
+    void OnTriggerExit(Collider other)
+    {
+        // Debug.Log(GetComponent<Collider>().name + " Out collider");
+        abnormal = 0;
     }
   }
 }
