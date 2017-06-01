@@ -136,15 +136,22 @@ namespace Network
 
             try
             {
-                socket.Connect(ipEnd);
+                // socket.Connect(ipEnd);
+                IAsyncResult result = socket.BeginConnect(ipEnd, null, null);
+                bool success = result.AsyncWaitHandle.WaitOne(5000, true);
+                if (!success)
+                {
+                    socket.Close();
+                    throw new ApplicationException("连接服务器超时");
+                }
                 isConnected = true;
-                Debug.Log("tcp连接服务器成功");
+                Debug.Log("TCP客户端连接服务器成功");
                 Debug.Log("服务器IP: " + ip + ", " + "服务器端口: " + port);
             }
             catch (Exception ex)
             {
                 isConnected = false;
-                Debug.LogError("tcp连接服务器失败! (" + ex.Message + ")");
+                Debug.LogError("TCP客户端连接服务器失败! (" + ex.Message + ")");
                 Debug.LogError("尝试服务器IP: " + ip + ", " + "尝试服务器端口: " + port);
                 socket.Close();
                 return;
@@ -203,21 +210,10 @@ namespace Network
             }
             while(true)
             {
-                try
-                {
-                    recvLen = socket.Receive(recvData);
-                    recvStr = Encoding.ASCII.GetString(recvData, 0, recvLen);
-                    Debug.Log("tcp接收内容：" + recvStr);
-                    Debug.Log("tcp接收长度：" + recvLen);
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogError(ex.Message);
-                    isConnected = false;
-                    // socket.Shutdown(SocketShutdown.Both);
-                    socket.Close();
-                    return;
-                }
+                recvLen = socket.Receive(recvData);
+                recvStr = Encoding.ASCII.GetString(recvData, 0, recvLen);
+                Debug.Log("tcp接收内容：" + recvStr);
+                Debug.Log("tcp接收长度：" + recvLen);
             }
         }
 
@@ -239,19 +235,88 @@ namespace Network
         Socket socket;
         IPAddress mIp;
         IPEndPoint ipEnd;
-        tcpServerSocket(string ip, int port)
+        int recvLen;
+        string recvStr;
+        byte[] recvData = new byte[1024];
+        byte[] sendData = new byte[1024];
+        public static bool startSignal = false;
+        public tcpServerSocket(string ip, int port)
         {
             InitSocket(ip, port);
         }
 
         private void InitSocket(string ip = "127.0.0.1", int port = 8089)
         {
-            // IPAddress ip = IPAddress.Parse(ip);
-            // ipEnd = new IPEndPoint(ip, port);
+             mIp = IPAddress.Parse(ip);
+            ipEnd = new IPEndPoint(mIp, port);
             // create server socket object
             socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
             // bind ip and port
             socket.Bind(ipEnd);
+            // setting max connecting request queue length
+            socket.Listen(10);
+            Debug.Log("启动监听 " + socket.LocalEndPoint.ToString() + " 成功");
+
+            // boot up a client connecting request listen in new thread
+            Thread thread = new Thread(new ThreadStart(ClientConnectListen));
+            thread.Start();
         }
+
+        private void ClientConnectListen()
+        {
+            while(true)
+            {
+                // create socket object for new client
+                Socket clientSocket = socket.Accept();
+                Debug.Log("客户端 " + clientSocket.RemoteEndPoint.ToString() + " 成功连接");
+
+                Thread thread = new Thread(SocketReceive);
+                thread.Start(clientSocket);
+            }
+        }
+
+        private void SocketReceive(object clientSocket)
+        {
+            Socket mClientSocket = (Socket)clientSocket;
+            while(true)
+            {
+                int recvLen = mClientSocket.Receive(recvData);
+                String recvStr = Encoding.ASCII.GetString(recvData, 0, recvLen);
+                Debug.Log("receive data: " + recvStr);
+                String st = "start\r\n";
+                if (recvStr == st)
+                {
+                    Debug.Log("receive start signal");
+                    sendData = Encoding.ASCII.GetBytes("ready\r\n");
+                    mClientSocket.Send(sendData);
+                    startSignal = true;
+                }
+                else if(recvStr == "stop\r\n")
+                {
+                    Debug.Log("receive stop signal");
+                    sendData = Encoding.ASCII.GetBytes("stopped\r\n");
+                    mClientSocket.Send(sendData);
+                    startSignal = false;
+                }
+
+            }
+        }
+        private void SocketSend(String data)
+        {
+            sendData = new byte[1024];
+            sendData = Encoding.ASCII.GetBytes(data);
+            socket.Send(sendData);
+        }
+
+        private void SocketSend(byte[] data)
+        {
+            socket.Send(data);
+        }
+
+        public bool getStartSignal()
+        {
+            return startSignal;
+        }
+
     }
 }

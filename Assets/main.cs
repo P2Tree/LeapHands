@@ -1,6 +1,7 @@
 ﻿// #define ADJUST
 // #define SHOWLOG
-#define COMMUNICATE
+// #define COMMUNICATE
+// #define EXTERCONTROL
 
 using System;
 using System.Text;
@@ -12,13 +13,19 @@ using Leap.Util;
 using Network;
 using Protocal;
 using Detector;
+using System.Threading;
 
 public class main : HandController {
 
 	#region Object members
 
 	HandDetector detector_;
+
+	// if print log information
 	Boolean logFlag = false;
+	// readyToRun signal
+	private static bool readyToRun = true;
+
 	// hand arguments: 3 position elements and 3 pasture elements
 	double handX;
 	double handY;
@@ -34,6 +41,9 @@ public class main : HandController {
 	// The direction is expressed as a unit vector pointing in the same direction
 	// as the palm normal (orthogonal to the palm and out of back of palm)
 	Vector handNormal;	
+    // Use to remember the previous hand normal vector and check hand turn too fast
+	Vector preHandNormal = new Vector(0, 0, 0);
+	double tooFastThreshold = 1.5;
 
 	// confidence value of hand frame
 	double handConfidence;
@@ -82,6 +92,7 @@ public class main : HandController {
 	// communication arguments
 	private udpClientSocket udp = null;
 	private tcpClientSocket tcp = null;
+	private tcpServerSocket tcpServer = null;
 	private makeProtocal constructor;
 	private string sendStringCmd;
 	private byte[] sendBytesCmd;
@@ -91,10 +102,10 @@ public class main : HandController {
 	private int abnormalOutofspeed = 0; // 0 is normal mode
 	private static int abnormalSendedOutofrange = 0;	// if abnormal is sended, set to true
 	private static int abnormalSendedOutofspeed = 0;
+	static int sendedNormal = 0;
 	private enum AbnormalType {OutOfRange, OutOfSpeed, Normal};
 
-	// readyToRun signal
-	private static bool readyToRun = true;
+	Thread runControlThread;
 
 	#endregion
 
@@ -113,6 +124,7 @@ public class main : HandController {
 		Debug.Log("LOG mode.");
 #else
 		logFlag = false;
+		Debug.Log("Normal node.");
 #endif
 
 		leap_controller_ = new Controller();
@@ -121,19 +133,22 @@ public class main : HandController {
 
 #if (COMMUNICATE)
 		///Initialize udp socket for communication
-		udp = new udpClientSocket("192.168.1.134", 1235);
-		// udp = new udpClientSocket("127.0.0.1", 8002);
-		
+		// udp = new udpClientSocket("192.168.1.134", 1235);
+		udp = new udpClientSocket("127.0.0.1", 8001);
 
 		///Initialize tcp socket for communication
-		tcp = new tcpClientSocket("192.168.1.134", 5557);
-		// tcp = new tcpClientSocket("127.0.0.1", 8088);
+		// tcp = new tcpClientSocket("192.168.1.134", 5557);
+		tcp = new tcpClientSocket("127.0.0.1", 8088);
 		
-		/// test tcp
-        // tcp.SocketSend("This is client: Hello server!");
-		///
+		// Initialize tcp server socket for start signal
+		// tcpServer = new tcpServerSocket("127.0.0.1", 8089);
+		tcpServer = new tcpServerSocket("192.168.1.125", 8889);
 #endif
 
+#if (EXTERCONTROL)
+		runControlThread = new Thread(RunControl);
+		runControlThread.Start();
+#endif
 	}
 
 	/** Initalizes the hand and tool lists and recording, if enabled.*/
@@ -159,30 +174,36 @@ public class main : HandController {
 	
 	/** Updates the graphics objects. */
 	void Update() {
-		if (readyToRun == true)
-		{
-			if (leap_controller_ == null)
-			return;
+// #if (EXTERCONTROL)
+// 		if (readyToRun == true)
+// 		{
+// #endif
+// 			if (leap_controller_ == null)
+// 			return;
 			
-			// UpdateRecorder();
-			Frame frame = GetFrame();
+// 			// UpdateRecorder();
+// 			Frame frame = GetFrame();
 
-			if (frame != null && !flag_initialized_)
-			{
-				InitializeFlags();
-			}
-			if (frame.Id != prev_graphics_id_)
-			{
-				UpdateHandModels(hand_graphics_, frame.Hands, leftGraphicsModel, rightGraphicsModel);
-				prev_graphics_id_ = frame.Id;
-			}
-		}
+// 			if (frame != null && !flag_initialized_)
+// 			{
+// 				InitializeFlags();
+// 			}
+// 			if (frame.Id != prev_graphics_id_)
+// 			{
+// 				prev_graphics_id_ = frame.Id;
+// 			}
+// #if (EXTERCONTROL)
+// 		}
+// 		RunControl();
+// #endif
 	}
 
 	/** Updates the physics objects */
 	void FixedUpdate() {
+#if (EXTERCONTROL)
 		if (readyToRun == true)
 		{
+#endif
 			if (leap_controller_ == null)
 				return;
 
@@ -195,24 +216,36 @@ public class main : HandController {
 
 			if (frame.Id != prev_physics_id_)
             {
-                UpdateHandModels(hand_physics_, frame.Hands, leftPhysicsModel, rightPhysicsModel);
-                UpdateToolModels(tools_, frame.Tools, toolModel);
+                // UpdateToolModels(tools_, frame.Tools, toolModel);
                 prev_physics_id_ = frame.Id;
 
                 int readyDataFlag = ProcessHands(frame);
 
+                // bool retAb = Abnormal(readyDataFlag);
+				bool retAb = true;
+				Abnormal(readyDataFlag);
+				// TODO: 分清超速异常和越界异常，越界异常需要不更新图像模型，但超速异常还是需要更新。
+                DestroyAllHands();
+				if (readyDataFlag == 0)
+				{
+    	            UpdateHandModels(hand_physics_, frame.Hands, leftPhysicsModel, rightPhysicsModel);
+					if (retAb == true)
+						UpdateHandModels(hand_graphics_, frame.Hands, leftGraphicsModel, rightGraphicsModel);
+				}
 
-#if (COMMUNICATE)
-                SendAbnormal(readyDataFlag);
 
+				#if (COMMUNICATE)
                 if (readyDataFlag == 0)
                 {
                     SendInformation(ProType.String);
                 }
-#endif
+				#endif
 
             }
+#if (EXTERCONTROL)
         }
+		RunControl();
+#endif
 	}
 
 
@@ -223,6 +256,15 @@ public class main : HandController {
 		tcp.SocketQuit();
 #endif
     }
+
+	private void RunControl()
+	{
+		while(!readyToRun)
+		{
+			readyToRun = false;
+			readyToRun = tcpServer.getStartSignal();
+		}
+	}
 	private int ProcessHands(Frame frame) {
 		// Debug.Log("Frame id: " + frame.Id + ", " + 
 		// 		"Timestamp: " + frame.Timestamp + ", " +
@@ -267,6 +309,11 @@ public class main : HandController {
 			{
 				handDirection = fixHand.Direction;
 				handNormal = fixHand.PalmNormal;
+				if (handNormal.AngleTo(preHandNormal) > tooFastThreshold)
+				{
+					return -3;
+				}
+				preHandNormal = handNormal;
 
 				handX = fixHand.StabilizedPalmPosition.x;
 				handY = fixHand.StabilizedPalmPosition.y;
@@ -423,7 +470,7 @@ public class main : HandController {
 		}
 	}
 
-	private void checkVelocity(Hand hand, float thresholdX = 700, float thresholdY = 700, float thresholdZ = 700) {
+	private void checkVelocity(Hand hand, float thresholdX = 1000, float thresholdY = 1000, float thresholdZ = 1000) {
 		float speedOfX = hand.PalmVelocity.x;
 		float speedOfY = hand.PalmVelocity.y;
 		float speedOfZ = hand.PalmVelocity.z;
@@ -448,8 +495,7 @@ public class main : HandController {
 	}
 
 	static int i = 0;
-	static int sendedNormal = 0;
-    private void SendAbnormal(int ready)
+    private bool Abnormal(int ready)
     {
 		i = i+1;
         /// abnormal exception Check
@@ -478,14 +524,17 @@ public class main : HandController {
 		if (abnormalOutofrange == 0 && abnormalOutofspeed == 0 && ready == 0)
 		{
 			SendAbnormalOnce(AbnormalType.Normal, true);
-			Debug.Log("abnormal debug: " + i + ", normal");	
+			// Debug.Log("abnormal debug: " + i + ", normal");	
 			sendedNormal = 1;
 			abnormalSendedOutofrange = 0;
 			abnormalSendedOutofspeed = 0;
+			return true;
 		}
+		return false;
     }
     private void SendAbnormalOnce(AbnormalType type, bool trigger)
     {
+	#if (COMMUNICATE)
 		byte[] data;
         if (type == AbnormalType.OutOfSpeed)
         {
@@ -502,6 +551,7 @@ public class main : HandController {
 			data = new byte[] { 0x3c, 0x02 };
 			tcp.SocketSend(data);
 		}
+	#endif
     }
 
     #endregion
