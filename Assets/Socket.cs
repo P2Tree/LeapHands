@@ -138,7 +138,7 @@ namespace Network
             {
                 // socket.Connect(ipEnd);
                 IAsyncResult result = socket.BeginConnect(ipEnd, null, null);
-                bool success = result.AsyncWaitHandle.WaitOne(5000, true);
+                bool success = result.AsyncWaitHandle.WaitOne(30000, true); // 30s
                 if (!success)
                 {
                     socket.Close();
@@ -151,8 +151,8 @@ namespace Network
             catch (Exception ex)
             {
                 isConnected = false;
-                Debug.LogError("TCP客户端连接服务器失败! (" + ex.Message + ")");
-                Debug.LogError("尝试服务器IP: " + ip + ", " + "尝试服务器端口: " + port);
+                Debug.LogWarning("TCP客户端连接服务器失败! (" + ex.Message + ")");
+                Debug.LogWarning("尝试服务器IP: " + ip + ", " + "尝试服务器端口: " + port);
                 socket.Close();
                 return;
             }
@@ -176,7 +176,7 @@ namespace Network
             }
             catch (Exception ex)
             {
-                Debug.LogError(ex.Message);
+                Debug.LogWarning(ex.Message);
                 isConnected = false;
                 socket.Close();
             }
@@ -195,7 +195,7 @@ namespace Network
             }
             catch (Exception ex)
             {
-                Debug.LogError(ex.Message);
+                Debug.LogWarning(ex.Message);
                 isConnected = false;
                 socket.Close();
             }
@@ -240,6 +240,9 @@ namespace Network
         byte[] recvData = new byte[1024];
         byte[] sendData = new byte[1024];
         public static bool startSignal = false;
+
+        Thread ListenThread;
+        Thread ReceiveThread;
         public tcpServerSocket(string ip, int port)
         {
             InitSocket(ip, port);
@@ -258,8 +261,8 @@ namespace Network
             Debug.Log("启动监听 " + socket.LocalEndPoint.ToString() + " 成功");
 
             // boot up a client connecting request listen in new thread
-            Thread thread = new Thread(new ThreadStart(ClientConnectListen));
-            thread.Start();
+            ListenThread = new Thread(new ThreadStart(ClientConnectListen));
+            ListenThread.Start();
         }
 
         private void ClientConnectListen()
@@ -270,8 +273,8 @@ namespace Network
                 Socket clientSocket = socket.Accept();
                 Debug.Log("客户端 " + clientSocket.RemoteEndPoint.ToString() + " 成功连接");
 
-                Thread thread = new Thread(SocketReceive);
-                thread.Start(clientSocket);
+                ReceiveThread = new Thread(SocketReceive);
+                ReceiveThread.Start(clientSocket);
             }
         }
 
@@ -316,6 +319,23 @@ namespace Network
         public bool getStartSignal()
         {
             return startSignal;
+        }
+        public void SocketQuit()
+        {
+            if (ListenThread != null)
+            {
+                ListenThread.Interrupt();
+                ListenThread.Abort();
+            }
+            if (ReceiveThread != null)
+            {
+                ReceiveThread.Interrupt();
+                ReceiveThread.Abort();
+            }
+            if (socket != null)
+            {
+                socket.Close();
+            }
         }
 
     }
